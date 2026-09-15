@@ -27,7 +27,7 @@ STAMPS_SHORTCUT = "F8"
 #   "static"     = label written once at creation, kept in sync by the existing
 #                  title-change callbacks. Zero repaint cost. Use
 #                  Edit -> Stamps -> Refresh all Stamp Labels to repair/migrate.
-STAMPS_AUTOLABEL_MODE = "expression"
+STAMPS_AUTOLABEL_MODE = "static"
 
 ANCHOR_STYLE = {
     "tile_color": 4294967041,

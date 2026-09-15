@@ -54,11 +54,18 @@ If you prefer, the same line can point to any other location where you keep Nuke
 nuke.pluginAddPath("/path/to/Stamps")
 ```
 
+Stamps reads its preferences from a JSON file named `stamps_prefs.json`. Two
+locations are supported:
+
+- `stamps/stamps_prefs.json` (inside the repository) — defaults shipped with Stamps.
+- `~/.nuke/stamps_prefs.json` — personal overrides; created automatically the
+  first time you change a preference via `Edit -> Stamps -> Preferences...`.
+
 ### Updating
 
 1. Replace the existing `Stamps` folder with the updated one.
 2. Restart Nuke.
-3. If needed, run `Edit -> Stamps -> Refresh all Stamps` in Nuke to rewrite callbacks and reconnect existing stamps.
+3. If needed, run `Edit -> Stamps -> Refresh Stamps` in Nuke to rewrite callbacks and reconnect existing stamps.
 
 ## Usage
 
@@ -73,6 +80,12 @@ Stamps also adds menu entries under:
 
 - `Edit -> Stamps`
 - `Nodes -> Other -> Stamps`
+
+## Releases
+
+- **v1.2**
+  - Adds **fast mode** (activate via `Edit -> Stamps -> Preferences...`). Default is `"expression"`.
+  - Adds **Refresh Stamps (full check)** (`Edit -> Stamps -> Refresh Stamps`).
 
 ## Typical Workflow
 

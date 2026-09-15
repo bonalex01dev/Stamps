@@ -101,14 +101,64 @@ try:
 except Exception:
     pass
 
+# ---------------- Preferences (JSON-backed) --------------------------------
+# Knobs added dynamically to Nuke's preferences node do NOT persist between
+# sessions (Nuke 17), so preferences live in JSON files:
+#   - stamps/stamps_prefs.json (in the repo) = defaults, versioned.
+#   - ~/.nuke/stamps_prefs.json = user overrides (created on first change).
+# User values win over repo defaults.
+STAMPS_PREFS_REPO_FILE = os.path.join(os.path.dirname(__file__), "stamps_prefs.json")
+STAMPS_PREFS_USER_FILE = os.path.join(os.path.expanduser("~"), ".nuke", "stamps_prefs.json")
+
+
+def stampsLoadPrefs():
+    """Return the Stamps preferences dict: repo defaults merged with user overrides."""
+    import json
+    prefs = {}
+    for path in (STAMPS_PREFS_REPO_FILE, STAMPS_PREFS_USER_FILE):
+        try:
+            with open(path, "r") as f:
+                prefs.update(json.load(f))
+        except Exception:
+            pass
+    return prefs
+
+
+def stampsSavePrefs(d):
+    """Write the Stamps preferences dict to the user JSON file."""
+    import json
+    try:
+        with open(STAMPS_PREFS_USER_FILE, "w") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+
+
+def stampsEnsureUserPrefs():
+    """Create the user prefs JSON (~/.nuke/stamps_prefs.json) if it does not exist."""
+    try:
+        if not os.path.exists(STAMPS_PREFS_USER_FILE):
+            os.makedirs(os.path.dirname(STAMPS_PREFS_USER_FILE), exist_ok=True)
+            with open(STAMPS_PREFS_USER_FILE, "w") as f:
+                f.write("{}\n")
+    except Exception:
+        pass
+
+
+stampsEnsureUserPrefs()
+
 # Autolabel mode: "expression" (default) keeps the per-node Python autolabel
 # callback (evaluated by Nuke on every tile repaint for every stamp);
-# "static" writes the title into the node label once and lets the existing
-# title-change callbacks keep labels in sync - zero repaint cost.
+# "static" writes a constant repr(title) autolabel at creation and keeps it in
+# sync via the title-change callbacks - zero repaint cost.
+# Priority: user JSON > repo JSON ("expression" by default) > stamps_config.
 try:
     STAMPS_AUTOLABEL_MODE
 except NameError:
     STAMPS_AUTOLABEL_MODE = "expression"
+_stamps_prefs = stampsLoadPrefs()
+if _stamps_prefs.get("stamps_autolabel_mode") in ("static", "expression"):
+    STAMPS_AUTOLABEL_MODE = _stamps_prefs["stamps_autolabel_mode"]
 if STAMPS_AUTOLABEL_MODE == "static":
     anchor_defaults.pop("autolabel", None)
     wired_defaults.pop("autolabel", None)
@@ -195,11 +245,8 @@ def wiredGetStyle(n):
     """
     if not isWired(n):
         return False
-    if not n.inputs():
-        wiredStyle(n, 1)
-    elif not isAnchor(n.input(0)):
-        wiredStyle(n, 1)
-    elif n["anchor"].value() != n.input(0).name():
+    inp = n.input(0)
+    if inp is None or not isAnchor(inp) or n["anchor"].value() != inp.name():
         wiredStyle(n, 1)
     else:
         wiredStyle(n, 0)
@@ -330,7 +377,7 @@ def wiredKnobChanged():
         try:
             n["title"].setValue(n["prev_title"].value())
             if STAMPS_AUTOLABEL_MODE == "static":
-                n["label"].setValue(n["title"].value())
+                n["autolabel"].setValue(repr(n["title"].value()))
         except Exception:
             pass
     else:
@@ -404,7 +451,7 @@ def anchorKnobChanged():
         try:
             n["title"].setValue(n["prev_title"].value())
             if STAMPS_AUTOLABEL_MODE == "static":
-                n["label"].setValue(n["title"].value())
+                n["autolabel"].setValue(repr(n["title"].value()))
         except Exception:
             pass
     elif kn == "name":
@@ -489,12 +536,14 @@ def retitleWired(anchor=""):
     try:
         anchor_title = anchor["title"].value()
         anchor_name = anchor.name()
+        if anchor["autolabel"].value() != repr(anchor_title):
+            anchor["autolabel"].setValue(repr(anchor_title))
         for nw in allWireds():
             if nw["anchor"].value() == anchor_name:
                 nw["title"].setValue(anchor_title)
                 nw["prev_title"].setValue(anchor_title)
-                if nw["label"].value() != anchor_title:
-                    nw["label"].setValue(anchor_title)
+                if nw["autolabel"].value() != repr(anchor_title):
+                    nw["autolabel"].setValue(repr(anchor_title))
         return True
     except Exception:
         return False
@@ -932,7 +981,7 @@ def anchor(title="", tags="", input_node="", node_type="2D"):
 
     if STAMPS_AUTOLABEL_MODE == "static":
         try:
-            n["label"].setValue(title)
+            n["autolabel"].setValue(repr(title))
         except Exception:
             pass
 
@@ -1031,7 +1080,7 @@ def wired(anchor):
 
     if STAMPS_AUTOLABEL_MODE == "static":
         try:
-            n["label"].setValue(title)
+            n["autolabel"].setValue(repr(anchor["title"].value()))
         except Exception:
             pass
 
@@ -2617,74 +2666,186 @@ def createWHotboxButtons():
 ### Menu functions
 #################################
 
-def refreshStampLabels(ns=""):
+def stampsShowPreferences():
     """
-    Manually re-sync every stamp's node label with its Anchor's title.
+    Open the Stamps preferences panel.
 
-    Needed in STAMPS_AUTOLABEL_MODE == "static" (labels are written once and
-    normally kept in sync by title callbacks); repairs drift caused by titles
-    changed outside the Stamps callbacks, and migrates scripts created in
-    "expression" mode to static labels.
+    The JSON files (repo defaults + ~/.nuke overrides) are the source of truth;
+    changing a value here writes the user JSON, re-applies module defaults, and
+    offers an immediate full refresh so all existing stamps migrate.
+    """
+    prefs = stampsLoadPrefs()
+    current = prefs.get("stamps_autolabel_mode", STAMPS_AUTOLABEL_MODE)
+    p = nuke.Panel("Stamps Preferences")
+    # nuke.Panel has no setValue(); put the current mode first so the pulldown
+    # opens preselected on it.
+    choices = [current] + [m for m in ("expression", "static") if m != current]
+    p.addEnumerationPulldown("Autolabel mode", " ".join(choices))
+    if p.show():
+        new_mode = p.value("Autolabel mode")
+        if new_mode not in ("static", "expression"):
+            nuke.message("Invalid mode '{}'.".format(new_mode))
+            return
+        if new_mode != current:
+            prefs["stamps_autolabel_mode"] = new_mode
+            stampsSavePrefs(prefs)
+            _stampsApplyMode(new_mode)
+            if nuke.ask("Autolabel mode set to '{}'.\nRun a full refresh now to migrate existing stamps?".format(new_mode)):
+                refreshStamps(gui=True)
+
+
+def _stampsApplyMode(mode):
+    """
+    Apply an autolabel mode to the running module: set the global and adjust
+    the creation defaults (static mode removes the per-node autolabel knob
+    default; expression mode restores it).
+    """
+    global STAMPS_AUTOLABEL_MODE
+    STAMPS_AUTOLABEL_MODE = mode
+    if mode == "static":
+        anchor_defaults.pop("autolabel", None)
+        wired_defaults.pop("autolabel", None)
+    else:
+        anchor_defaults["autolabel"] = _stamp_autolabel_expression()
+        wired_defaults["autolabel"] = _stamp_autolabel_expression()
+
+
+def _stamp_autolabel_expression():
+    """
+    Autolabel knob content used in "expression" mode.
+
+    Matches the original upstream Stamps behavior: the title of the node
+    itself (wired stamps keep their own title synchronized with the anchor).
+    """
+    return 'nuke.thisNode().knob("title").value()'
+
+
+def refreshStamps(ns="", gui=True):
+    """
+    Full consistency check for all Stamps in the script (one unified entry point).
+
+    Checklist, per node:
+      - Wired stamps: reconnect input 0 to the anchor stored in the 'anchor'
+        knob; flag broken connections (style + report item).
+      - Wired stamps: 'anchor' knob pointing to a missing/non-anchor node is
+        reported.
+      - Wired stamps: title/prev_title diverging from the anchor's title are
+        resynchronized (anchor is authoritative).
+      - autolabel: in "static" mode a constant repr(title) is written (also
+        clears legacy label-based autolabels); in "expression" mode the
+        original upstream expression is restored. Both directions migrate.
+      - Duplicate titles across different anchors: reported only (not fixed).
 
     Args:
-        ns (list, optional): Restrict to these anchors. Empty = all anchors.
+        ns (list, optional): Restrict to these anchors (and their wireds).
+            Empty = all anchors in the script.
+        gui (bool): Show a summary report at the end (menu usage). Called with
+            gui=False from scripts - no dialogs, no nuke.ask.
 
     Returns:
-        int: Number of labels (re)written.
+        dict: {"anchors": n, "wireds": n, "fixed": n, "warnings": [str]}
     """
-    count = 0
-    for a in allAnchors(ns):
+    import re as _re
+
+    report = {"anchors": 0, "wireds": 0, "fixed": 0, "warnings": []}
+    mode = STAMPS_AUTOLABEL_MODE
+
+    # Single pass over all nodes: classify anchors and wireds.
+    anchors, wireds = [], []
+    for n in nuke.allNodes():
+        try:
+            if isAnchor(n):
+                anchors.append(n)
+            elif isWired(n):
+                wireds.append(n)
+        except Exception:
+            continue
+    if ns != "":
+        anchors = [a for a in anchors if a in ns]
+    anchor_names = set(a.name() for a in anchors)
+    report["anchors"] = len(anchors)
+    report["wireds"] = len(wireds)
+
+    # Titles of anchors are authoritative; detect duplicate titles.
+    titles = {}
+    for a in anchors:
         try:
             t = a["title"].value()
         except Exception:
             continue
-        if a["label"].value() != t:
-            a["label"].setValue(t)
-            count += 1
-        for nw in allWireds():
-            if nw["anchor"].value() == a.name() and nw["label"].value() != t:
-                nw["label"].setValue(t)
-                count += 1
-    return count
+        titles.setdefault(t, []).append(a.name())
+    for t, names in titles.items():
+        if len(names) > 1:
+            report["warnings"].append(
+                "Duplicate title '{}' on anchors: {}".format(t, ", ".join(names)))
 
+    def _clamp(items, limit=10):
+        if len(items) > limit:
+            return items[:limit] + ["... and {} more".format(len(items) - limit)]
+        return items
 
-def refreshStamps(ns=""):
-    """
-    Refresh all wired stamps in the script to update styles and reconnections.
+    # --- Wired stamps checklist -------------------------------------------
+    for w in wireds:
+        try:
+            anchor_name = w["anchor"].value()
+            a = nuke.toNode(anchor_name)
+        except Exception:
+            a = None
+        if a is None or not isAnchor(a):
+            wiredStyle(w, 1)
+            report["warnings"].append("Stamp '{}' points to missing anchor '{}'".format(
+                w.name(), anchor_name))
+            continue
+        # Reconnect + style.
+        try:
+            if w.input(0) != a:
+                w.setInput(0, a)
+                report["fixed"] += 1
+        except Exception:
+            report["fixed"] += 1
+        wiredGetStyle(w)
+        # Title resync (anchor wins).
+        try:
+            at = a["title"].value()
+            if w["title"].value() != at:
+                w["title"].setValue(at)
+                report["fixed"] += 1
+            if w["prev_title"].value() != at:
+                w["prev_title"].setValue(at)
+                report["fixed"] += 1
+        except Exception:
+            pass
+        # autolabel sync/migration.
+        try:
+            target = repr(at) if mode == "static" else _stamp_autolabel_expression()
+            if w["autolabel"].value() != target:
+                w["autolabel"].setValue(target)
+                report["fixed"] += 1
+        except Exception:
+            pass
 
-    Args:
-        ns (list, optional): A list of nodes to refresh. If empty, refreshes all wired stamps.
-    """
-    stamps = allWireds(ns)
-    error_count = 0
-    failed = []
-    for s in stamps:
-        if not wiredReconnect(s):
-            error_count += 1
-            failed.append(s)
+    # --- Anchor autolabel sync/migration ----------------------------------
+    for a in anchors:
+        try:
+            target = repr(a["title"].value()) if mode == "static" else _stamp_autolabel_expression()
+            if a["autolabel"].value() != target:
+                a["autolabel"].setValue(target)
+                report["fixed"] += 1
+        except Exception:
+            pass
+
+    if report["warnings"]:
+        report["warnings"] = _clamp(report["warnings"])
+
+    if gui:
+        if report["warnings"]:
+            nuke.message("Stamps refresh finished with {} warning(s):\n\n{}".format(
+                len(report["warnings"]), "\n".join(report["warnings"])))
         else:
-            try:
-                s["reconnect_this"].execute()
-            except Exception:
-                pass
-    failed_names = ", ".join([i.name() for i in failed])
-    if error_count == 0:
-        if ns == "":
-            nuke.message("All Stamps refreshed! No errors detected.")
-        else:
-            nuke.message("Selected Stamps refreshed! No errors detected.")
-    else:
-        # Deselect all, then select only the failed nodes.
-        for i in nuke.selectedNodes():
-            i.setSelected(False)
-        for i in failed:
-            i.setSelected(True)
-        if ns == "":
-            nuke.message(
-                "All Stamps refreshed. Found {0} connection error/s:\n\n{1}".format(str(error_count), failed_names))
-        else:
-            nuke.message("Selected Stamps refreshed. Found {0} connection error/s:\n\n{1}".format(str(error_count),
-                                                                                                  failed_names))
+            nuke.message("Stamps refreshed: {} anchor(s), {} wired stamp(s), "
+                         "{} fix(es). No errors.".format(
+                             report["anchors"], report["wireds"], report["fixed"]))
+    return report
 
 
 def addTags(ns=""):
@@ -2919,8 +3080,8 @@ def stampBuildMenus():
         m.addCommand('Edit/Stamps/Make Stamp', 'stamps.goStamp()', STAMPS_SHORTCUT, icon="stamps.png")
         m.addCommand('Edit/Stamps/Add tag\/s to selected nodes', 'stamps.addTags()')
         m.addCommand('Edit/Stamps/Rename Stamp tag', 'stamps.renameTag()')
-        m.addCommand('Edit/Stamps/Refresh all Stamps', 'stamps.refreshStamps()')
-        m.addCommand('Edit/Stamps/Refresh all Stamp Labels', 'stamps.refreshStampLabels()')
+        m.addCommand('Edit/Stamps/Refresh Stamps (full check)', 'stamps.refreshStamps(gui=True)')
+        m.addCommand('Edit/Stamps/Preferences...', 'stamps.stampsShowPreferences()')
         m.addCommand('Edit/Stamps/Selected/Reconnect by Name', 'stamps.selectedReconnectByName()')
         m.addCommand('Edit/Stamps/Selected/Reconnect by Title', 'stamps.selectedReconnectByTitle()')
         m.addCommand('Edit/Stamps/Selected/Reconnect by Selection', 'stamps.selectedReconnectBySelection()')
