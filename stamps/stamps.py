@@ -158,13 +158,20 @@ def wiredStyle(n, style=0):
     # Remove any 'Bold' specifier from the font name.
     nf = n["note_font"].value().split(" Bold")[0].split(" bold")[0]
     if style == 0:  # DEFAULT
-        n["note_font_size"].setValue(size)
-        n["note_font_color"].setValue(0)
-        n["note_font"].setValue(nf)
+        target_size, target_color, target_font = size, 0, nf
     elif style == 1:  # BROKEN
-        n["note_font_size"].setValue(size * 2)
-        n["note_font_color"].setValue(4278190335)
-        n["note_font"].setValue(nf + " Bold")
+        target_size, target_color, target_font = size * 2, 4278190335, nf + " Bold"
+    else:
+        return
+    # Diff-guard: only write knobs whose value actually changes. Every setValue
+    # re-triggers knobChanged, so unconditional writes caused callback cascades
+    # (noticeable with many stamps on every inputChange).
+    if n["note_font_size"].value() != target_size:
+        n["note_font_size"].setValue(target_size)
+    if n["note_font_color"].value() != target_color:
+        n["note_font_color"].setValue(target_color)
+    if n["note_font"].value() != target_font:
+        n["note_font"].setValue(target_font)
 
 
 def wiredGetStyle(n):
