@@ -386,9 +386,9 @@ def anchorKnobChanged():
             pass
     elif kn == "name":
         try:
-            nn = anchor["prev_name"].value()
+            nn = n["prev_name"].value()
         except Exception:
-            nn = anchor.name()
+            nn = n.name()
         for child in anchorWireds(n):
             child.knob("anchor").setValue(nn)
         n["prev_name"].setValue(n.name())
