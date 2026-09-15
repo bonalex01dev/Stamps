@@ -20,6 +20,15 @@ import re
 
 STAMPS_SHORTCUT = "F8"
 
+# Autolabel mode for stamp labels:
+#   "expression" = default, per-node Python autolabel callback (costs one Python
+#                  evaluation per stamp on every UI repaint - measurable with
+#                  hundreds of stamps).
+#   "static"     = label written once at creation, kept in sync by the existing
+#                  title-change callbacks. Zero repaint cost. Use
+#                  Edit -> Stamps -> Refresh all Stamp Labels to repair/migrate.
+STAMPS_AUTOLABEL_MODE = "expression"
+
 ANCHOR_STYLE = {
     "tile_color": 4294967041,
     "note_font_size": 20,

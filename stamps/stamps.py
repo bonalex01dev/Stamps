@@ -101,6 +101,18 @@ try:
 except Exception:
     pass
 
+# Autolabel mode: "expression" (default) keeps the per-node Python autolabel
+# callback (evaluated by Nuke on every tile repaint for every stamp);
+# "static" writes the title into the node label once and lets the existing
+# title-change callbacks keep labels in sync - zero repaint cost.
+try:
+    STAMPS_AUTOLABEL_MODE
+except NameError:
+    STAMPS_AUTOLABEL_MODE = "expression"
+if STAMPS_AUTOLABEL_MODE == "static":
+    anchor_defaults.pop("autolabel", None)
+    wired_defaults.pop("autolabel", None)
+
 
 #################################
 ### FUNCTIONS INSIDE OF BUTTONS
@@ -317,6 +329,8 @@ def wiredKnobChanged():
             nuke.message("Please set a valid title.")
         try:
             n["title"].setValue(n["prev_title"].value())
+            if STAMPS_AUTOLABEL_MODE == "static":
+                n["label"].setValue(n["title"].value())
         except Exception:
             pass
     else:
@@ -389,6 +403,8 @@ def anchorKnobChanged():
             nuke.message("Please set a valid title.")
         try:
             n["title"].setValue(n["prev_title"].value())
+            if STAMPS_AUTOLABEL_MODE == "static":
+                n["label"].setValue(n["title"].value())
         except Exception:
             pass
     elif kn == "name":
@@ -477,6 +493,8 @@ def retitleWired(anchor=""):
             if nw["anchor"].value() == anchor_name:
                 nw["title"].setValue(anchor_title)
                 nw["prev_title"].setValue(anchor_title)
+                if nw["label"].value() != anchor_title:
+                    nw["label"].setValue(anchor_title)
         return True
     except Exception:
         return False
@@ -912,6 +930,12 @@ def anchor(title="", tags="", input_node="", node_type="2D"):
         except Exception:
             pass
 
+    if STAMPS_AUTOLABEL_MODE == "static":
+        try:
+            n["label"].setValue(title)
+        except Exception:
+            pass
+
     if node_type in AnchorClassColors:
         try:
             n["tile_color"].setValue(AnchorClassColors[node_type])
@@ -1002,6 +1026,12 @@ def wired(anchor):
     for knob_name, value in wired_defaults.items():
         try:
             n[knob_name].setValue(value)
+        except Exception:
+            pass
+
+    if STAMPS_AUTOLABEL_MODE == "static":
+        try:
+            n["label"].setValue(title)
         except Exception:
             pass
 
@@ -2587,6 +2617,37 @@ def createWHotboxButtons():
 ### Menu functions
 #################################
 
+def refreshStampLabels(ns=""):
+    """
+    Manually re-sync every stamp's node label with its Anchor's title.
+
+    Needed in STAMPS_AUTOLABEL_MODE == "static" (labels are written once and
+    normally kept in sync by title callbacks); repairs drift caused by titles
+    changed outside the Stamps callbacks, and migrates scripts created in
+    "expression" mode to static labels.
+
+    Args:
+        ns (list, optional): Restrict to these anchors. Empty = all anchors.
+
+    Returns:
+        int: Number of labels (re)written.
+    """
+    count = 0
+    for a in allAnchors(ns):
+        try:
+            t = a["title"].value()
+        except Exception:
+            continue
+        if a["label"].value() != t:
+            a["label"].setValue(t)
+            count += 1
+        for nw in allWireds():
+            if nw["anchor"].value() == a.name() and nw["label"].value() != t:
+                nw["label"].setValue(t)
+                count += 1
+    return count
+
+
 def refreshStamps(ns=""):
     """
     Refresh all wired stamps in the script to update styles and reconnections.
@@ -2859,6 +2920,7 @@ def stampBuildMenus():
         m.addCommand('Edit/Stamps/Add tag\/s to selected nodes', 'stamps.addTags()')
         m.addCommand('Edit/Stamps/Rename Stamp tag', 'stamps.renameTag()')
         m.addCommand('Edit/Stamps/Refresh all Stamps', 'stamps.refreshStamps()')
+        m.addCommand('Edit/Stamps/Refresh all Stamp Labels', 'stamps.refreshStampLabels()')
         m.addCommand('Edit/Stamps/Selected/Reconnect by Name', 'stamps.selectedReconnectByName()')
         m.addCommand('Edit/Stamps/Selected/Reconnect by Title', 'stamps.selectedReconnectByTitle()')
         m.addCommand('Edit/Stamps/Selected/Reconnect by Selection', 'stamps.selectedReconnectBySelection()')
